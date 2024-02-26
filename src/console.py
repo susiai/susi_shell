@@ -92,7 +92,7 @@ def console(status, prompt):
 
     if prompt == '/model ls':
         output_queue.put("Available models:\n")
-        models_dict = ollama_list()
+        models_dict = ollama_list(status['endpoints'][0])
         for (model, attr) in models_dict.items():
             output_queue.put(f"- {model}\n")
         output_queue.put("\n")
@@ -102,7 +102,7 @@ def console(status, prompt):
         try:
             model_name = prompt.split(' ')[1].strip()
             # check if model_name exists in list of models
-            models_dict = ollama_list()
+            models_dict = ollama_list(status['endpoints'][0])
             if model_name not in models_dict:
                 output_queue.put(f"A model with name '{model_name}' does not exist\n")
                 output_queue.put("\n")
@@ -117,4 +117,4 @@ def console(status, prompt):
             return
 
     endpoint = status["endpoints"][0]
-    chat(endpoint, output_queue, status["context"], prompt=prompt)
+    chat(endpoint, output_queue, status["context"], prompt=prompt, stream=True)

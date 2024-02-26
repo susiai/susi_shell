@@ -72,7 +72,7 @@ def main():
         # read user input and process it at once as prompt
         user_input = input()
         context = PERSONA[DEFAULT_PERSONA]["context"].copy()
-        chat(endpoint, output_queue, context, prompt=user_input)
+        chat(endpoint, output_queue, context, prompt=user_input, stream=True)
 
     if command == 'ls':
         # list available models; this is operated as console command
