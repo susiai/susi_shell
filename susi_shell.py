@@ -1,10 +1,6 @@
-import os
 import sys
-import json
 import time
 import queue
-import urllib3
-import requests
 import argparse
 import threading
 from src.persona import PERSONA, DEFAULT_PERSONA
@@ -16,7 +12,7 @@ def terminal(status, command_line):
     if command_line == '"""':
         if status["multi_line"]:
             status["multi_line"] = False
-            console(context, "\n".join(status["input_lines"]))
+            console(status, "\n".join(status["input_lines"]))
             return
 
         status["multi_line"] = True
@@ -72,11 +68,15 @@ def main():
         # read user input and process it at once as prompt
         user_input = input()
         context = PERSONA[DEFAULT_PERSONA]["context"].copy()
-        chat(endpoint, output_queue, context, prompt=user_input, stream=True)
+        chat(endpoint, output_queue, context, prompt=user_input, stream=False)
 
     if command == 'ls':
         # list available models; this is operated as console command
         console(status, "/model ls")
+
+    if command == 'ps':
+        # list available models; this is operated as console command
+        console(status, "/model ps")
 
     # wait for output queue to finish
     output_queue.put(POISON_OUTPUT_TOKEN)

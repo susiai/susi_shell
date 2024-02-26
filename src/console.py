@@ -1,9 +1,6 @@
 import sys
-import requests
-import argparse
-import threading
 from src.persona import PERSONA, DEFAULT_PERSONA
-from src.ollama_client import get_endpoint, ollama_list, chat
+from src.ollama_client import ollama_list, ollama_ps, chat
 
 POISON_OUTPUT_TOKEN = "***POISON_OUTPUT_TOKEN***" # token to indicate end of output in output_queue
 
@@ -45,6 +42,7 @@ def console(status, prompt):
         output_queue.put("  /persona <name>: Switch to persona with given name\n")
         output_queue.put("  /model: Print current model\n")
         output_queue.put("  /model ls: List available models\n")
+        output_queue.put("  /model ps: List running models\n")
         output_queue.put("  /model <name>: Switch to model with given name\n")
         output_queue.put("  /?, /help: Show help\n")
         output_queue.put("\n")
@@ -93,6 +91,14 @@ def console(status, prompt):
     if prompt == '/model ls':
         output_queue.put("Available models:\n")
         models_dict = ollama_list(status['endpoints'][0])
+        for (model, attr) in models_dict.items():
+            output_queue.put(f"- {model}\n")
+        output_queue.put("\n")
+        return
+    
+    if prompt == '/model ps':
+        output_queue.put("Running models:\n")
+        models_dict = ollama_ps(status['endpoints'][0])
         for (model, attr) in models_dict.items():
             output_queue.put(f"- {model}\n")
         output_queue.put("\n")
