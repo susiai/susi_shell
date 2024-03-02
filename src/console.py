@@ -1,6 +1,6 @@
 import sys
 from src.persona import PERSONA, DEFAULT_PERSONA
-from src.ollama_client import ollama_list, ollama_ps, chat
+from src.ollama_client import ollama_list, ollama_ps, ollama_pull, ollama_delete, chat
 
 POISON_OUTPUT_TOKEN = "***POISON_OUTPUT_TOKEN***" # token to indicate end of output in output_queue
 
@@ -43,6 +43,8 @@ def console(status, prompt):
         output_queue.put("  /model: Print current model\n")
         output_queue.put("  /model ls: List available models\n")
         output_queue.put("  /model ps: List running models\n")
+        output_queue.put("  /model rm <name>: delete a model\n")
+        output_queue.put("  /model pull <name>: pull a model\n")
         output_queue.put("  /model <name>: Switch to model with given name\n")
         output_queue.put("  /?, /help: Show help\n")
         output_queue.put("\n")
@@ -59,7 +61,7 @@ def console(status, prompt):
         output_queue.put("\n")
         return
 
-    if prompt == '/persona ls':
+    if prompt == '/persona ls' or prompt == '/persona list':
         output_queue.put("Available personas:\n")
         for name, data in PERSONA.items():
             output_queue.put(f"  {name}: {data['description']}\n")
@@ -88,7 +90,7 @@ def console(status, prompt):
         output_queue.put("\n")
         return
 
-    if prompt == '/model ls':
+    if prompt == '/model ls' or prompt == '/model list':
         output_queue.put("Available models:\n")
         models_dict = ollama_list(status['endpoints'][0])
         for (model, attr) in models_dict.items():
@@ -103,10 +105,35 @@ def console(status, prompt):
             output_queue.put(f"- {model}\n")
         output_queue.put("\n")
         return
+    
+    if prompt.startswith('/model pull '):
+        model_name = prompt.split(' ')[2].strip()
+        output_queue.put("Pulling model:\n")
+        success = ollama_pull(status['endpoints'][0], model_name)
+        output_queue.put(("Successfully pulled model " if success else "Failed to pull model ") + model_name + "\n")
+        output_queue.put("\n")
+        return
+    
+    if prompt.startswith('/model rm ') or prompt.startswith('/model delete '):
+        model_name = prompt.split(' ')[2].strip()
+        output_queue.put("Deleting model:\n")
+        success = ollama_delete(status['endpoints'][0], model_name)
+        output_queue.put(("Successfully deleted model " if success else "Failed to delete model ") + model_name + "\n")
+        output_queue.put("\n")
+        return
 
     if prompt.startswith('/model '):
         try:
-            model_name = prompt.split(' ')[1].strip()
+            token = prompt.split(' ')
+            if len(token) < 3:
+                model_name = token[1].strip()
+            elif token[1].strip() == "run":
+                model_name = token[2].strip()
+            else:
+                output_queue.put(f"Error switching to a model: wrong syntax")
+                output_queue.put("\n")
+                return
+            
             # check if model_name exists in list of models
             models_dict = ollama_list(status['endpoints'][0])
             if model_name not in models_dict:

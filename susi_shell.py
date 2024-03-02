@@ -27,7 +27,7 @@ def terminal(status, command_line):
 
 def main():
     parser = argparse.ArgumentParser(description='AI Command Line Tools')
-    parser.add_argument('command', type=str, help='The command (run, batch, ask, ls)')
+    parser.add_argument('command', nargs='?', default=None, help='The command (run, batch, ask, ls)')
     parser.add_argument('model', nargs='?', default='llama3.2:latest', help='An additional parameter for the command')
 
     args = parser.parse_args()
@@ -41,7 +41,7 @@ def main():
     status = initialize_status(endpoint, DEFAULT_PERSONA, output_queue)
 
     # parse command line commands
-    if command == 'run':
+    if command == None or command == 'run':
         # run the shell
         while True:
             # read user input
@@ -77,6 +77,14 @@ def main():
     if command == 'ps':
         # list available models; this is operated as console command
         console(status, "/model ps")
+
+    if command == 'pull':
+        # pull a model
+        console(status, "/model pull " + args.model)
+
+    if command == 'rm':
+        # dele a model
+        console(status, "/model rm " + args.model)
 
     # wait for output queue to finish
     output_queue.put(POISON_OUTPUT_TOKEN)
