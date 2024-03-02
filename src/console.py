@@ -68,9 +68,17 @@ def console(status, prompt):
         output_queue.put("  /model: Print current model\n")
         output_queue.put("  /model ls: List available models\n")
         output_queue.put("  /model ps: List running models\n")
-        output_queue.put("  /model rm <name>: delete a model from first api endpoint\n")
-        output_queue.put("  /model pull <name>: pull a model into first api endpoint\n")
+        output_queue.put("  /model rm <name>: delete a model from all api endpoints\n")
+        output_queue.put("  /model rmr <name>: delete a model from a random api endpoint\n")
+        output_queue.put("  /model pull <name>: pull a model into all api endpoints\n")
+        output_queue.put("  /model pull0 <name>: pull a model into first api endpoint\n")
+        output_queue.put("  /model pulln <name>: pull a model into last api endpoint\n")
         output_queue.put("  /model <name>: Switch to model with given name\n")
+        #output_queue.put("  /council on: Switch on a council of random models (at least 3 or number of APIs)\n")
+        #output_queue.put("  /council on <n>: Switch on a council of <n> random models\n")
+        #output_queue.put("  /council ls: List models used in the council\n")
+        #output_queue.put("  /council off: Switch off council\n")
+        #output_queue.put("  /council <name-1>, <name-2>, ..., <name-n>: Use given models for council\n")
         output_queue.put("  /?, /help: Show help\n")
         output_queue.put("\n")
         return
@@ -96,7 +104,7 @@ def console(status, prompt):
         return
     
     if prompt.startswith('/api rm '):
-        api_base = prompt.split(' ')[2].strip()
+        model = prompt.split(' ')[2].strip()
         status["endpoints"] = [endpoint for endpoint in status["endpoints"] if endpoint["api_base"] != api_base]
         output_queue.put(f"Removed endpoint '{api_base}'\n")
         output_queue.put("\n")
@@ -139,15 +147,19 @@ def console(status, prompt):
     if prompt == '/model ls' or prompt == '/model list':
         output_queue.put("Available models:\n")
         models_acc_dict = {}
+        model_max_len = 0
         for endpoint in status["endpoints"]:
             models_dict = ollama_list(endpoint)
             for (model, attr) in models_dict.items():
+                model_max_len = max(model_max_len, len(model))
                 if model not in models_acc_dict:
                     models_acc_dict[model] = 1
                 else:
                     models_acc_dict[model] += 1
+        output_queue.put(f"Model Name {' '*(model_max_len-22)} # of Endpoints\n")
+        output_queue.put(f"{'-'*(model_max_len+4)}\n")
         for (model, count) in models_acc_dict.items():
-            output_queue.put(f"- {model} ({count} endpoints)\n")
+            output_queue.put(f"{model} {' '*(model_max_len-len(model))} {count}\n")
         output_queue.put("\n")
         return
     
@@ -162,25 +174,64 @@ def console(status, prompt):
                 else:
                     models_acc_dict[model].append(endpoint["api_base"])
         for (model, endpoints) in models_acc_dict.items():
-            output_queue.put(f"- {model} {endpoints}\n")
+            output_queue.put(f"{model} {endpoints}\n")
+        output_queue.put("\n")
+        return
+    
+    if prompt.startswith('/model pull0 '):
+        model_name = prompt.split(' ')[2].strip()
+        output_queue.put("Pulling model:\n")
+        endpoint = status['endpoints'][0]
+        success = ollama_pull(endpoint, model_name)
+        output_queue.put(("Successfully pulled model " if success else "Failed to pull model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
+        output_queue.put("\n")
+        return
+    
+    if prompt.startswith('/model pulln '):
+        model_name = prompt.split(' ')[2].strip()
+        output_queue.put("Pulling model:\n")
+        endpoint = status['endpoints'][-1]
+        success = ollama_pull(endpoint, model_name)
+        output_queue.put(("Successfully pulled model " if success else "Failed to pull model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
         output_queue.put("\n")
         return
     
     if prompt.startswith('/model pull '):
         model_name = prompt.split(' ')[2].strip()
-        output_queue.put("Pulling model:\n")
-        success = ollama_pull(status['endpoints'][0], model_name)
-        output_queue.put(("Successfully pulled model " if success else "Failed to pull model ") + model_name + "\n")
+        output_queue.put("Pulling models:\n")
+        for endpoint in status['endpoints']:
+            success = ollama_pull(endpoint, model_name)
+            output_queue.put(("Successfully pulled model " if success else "Failed to pull model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
         output_queue.put("\n")
         return
     
     if prompt.startswith('/model rm ') or prompt.startswith('/model delete '):
         model_name = prompt.split(' ')[2].strip()
-        output_queue.put("Deleting model:\n")
-        success = ollama_delete(status['endpoints'][0], model_name)
-        output_queue.put(("Successfully deleted model " if success else "Failed to delete model ") + model_name + "\n")
+        output_queue.put(f"Deleting model {model_name} in all endpoints:\n")
+        for endpoint in status['endpoints']:
+            success = ollama_delete(endpoint, model_name)
+            output_queue.put(("Successfully deleted model " if success else "Failed to delete model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
         output_queue.put("\n")
         return
+    
+    if prompt.startswith('/model rmr '):
+        model_name = prompt.split(' ')[2].strip()
+        output_queue.put(f"Deleting model {model_name} in one random endpoint:\n")
+        endpoint_candidates = []
+        for endpoint in status['endpoints']:
+            model_dict = ollama_list(endpoint)
+            if model_name in model_dict or model_name + ":latest" in model_dict:
+                endpoint_candidates.append(endpoint)
+        if len(endpoint_candidates) == 0:
+            output_queue.put(f"Model {model_name} not found in any endpoint\n")
+            output_queue.put("\n")
+            return
+        else:
+            endpoint = endpoint_candidates[random.randint(0, len(endpoint_candidates)-1)]
+            success = ollama_delete(endpoint, model_name)
+            output_queue.put(("Successfully deleted model " if success else "Failed to delete model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
+            output_queue.put("\n")
+            return
 
     if prompt.startswith('/model '):
         try:
