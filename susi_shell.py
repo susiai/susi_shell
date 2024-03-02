@@ -4,8 +4,8 @@ import queue
 import argparse
 import threading
 from src.persona import PERSONA, DEFAULT_PERSONA
-from src.ollama_client import get_endpoint, ollama_list, chat
-from src.console import initialize_status, queue_printer, console, POISON_OUTPUT_TOKEN
+from src.ollama_client import get_endpoint, chat
+from src.console import initialize_status, select_endpoint, queue_printer, console, POISON_OUTPUT_TOKEN
 
 # process commands line by line, handles multi-line inputs
 def terminal(status, command_line):
@@ -29,16 +29,18 @@ def main():
     parser = argparse.ArgumentParser(description='AI Command Line Tools')
     parser.add_argument('command', nargs='?', default=None, help='The command (run, batch, ask, ls)')
     parser.add_argument('model', nargs='?', default='llama3.2:latest', help='An additional parameter for the command')
+    parser.add_argument('--api', action='append', help="Specify backend OpenAI API endpoints (i.e. ollama); can be used multiple times")
 
     args = parser.parse_args()
     command = args.command
-
+    
     # initialize output queue and status
     output_queue = queue.Queue()
     output_queue_thread = threading.Thread(target=queue_printer, args=(output_queue,), daemon=True)
     output_queue_thread.start()
-    endpoint = get_endpoint(model_name = args.model)
-    status = initialize_status(endpoint, DEFAULT_PERSONA, output_queue)
+    api_endpoints = args.api if args.api else ["http://localhost:11434"]
+    endpoints = [get_endpoint(api_base = api, model_name = args.model) for api in api_endpoints]
+    status = initialize_status(endpoints, args.model, DEFAULT_PERSONA, output_queue)
 
     # parse command line commands
     if command == None or command == 'run':
@@ -68,6 +70,7 @@ def main():
         # read user input and process it at once as prompt
         user_input = input()
         context = PERSONA[DEFAULT_PERSONA]["context"].copy()
+        endpoint = select_endpoint(endpoints, args.model)
         chat(endpoint, output_queue, context, prompt=user_input, stream=False)
 
     if command == 'ls':

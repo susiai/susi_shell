@@ -1,13 +1,15 @@
 import sys
+import random
 from src.persona import PERSONA, DEFAULT_PERSONA
 from src.ollama_client import ollama_list, ollama_ps, ollama_pull, ollama_delete, chat
 
 POISON_OUTPUT_TOKEN = "***POISON_OUTPUT_TOKEN***" # token to indicate end of output in output_queue
 
 # initialize status: this is a dictionary that holds the current state of the console
-def initialize_status(endpoint, persona, output_queue):
+def initialize_status(endpoints, preferred_model, persona, output_queue):
     return {
-        "endpoints": [endpoint],
+        "endpoints": endpoints, # list of endpoint url stubs
+        "preferred_model": preferred_model,
         "context": PERSONA[persona]["context"].copy(),
         "persona": persona,
         "multi_line": False,
@@ -24,6 +26,26 @@ def queue_printer(output_queue):
         print(item, end="")
         sys.stdout.flush()
 
+def select_endpoint(status):
+    endpoints = status["endpoints"]
+    preferred_model = status["preferred_model"]
+    return select_endpoint(endpoints, preferred_model)
+
+def select_endpoint(endpoints, preferred_model):
+    if len(endpoints) == 0:
+        return None
+    if len(endpoints) == 1:
+        endpoints[0]["model"] = preferred_model
+        return endpoints[0]
+    else:
+        # get models for each endpoint
+        potential_endpoints = []
+        for ep in endpoints:
+            models_dict = ollama_list(ep)
+            if models_dict.get(preferred_model, None) is not None or models_dict.get(preferred_model + ":latest", None) is not None:
+                potential_endpoints.append(ep)
+        return potential_endpoints[random.randint(0, len(potential_endpoints)-1)]
+
 # compute responses
 def console(status, prompt):
     output_queue = status["output_queue"]
@@ -37,14 +59,17 @@ def console(status, prompt):
         output_queue.put("Commands:\n")
         output_queue.put("  /bye: Exit\n")
         output_queue.put("  /clear: Clear session context\n")
+        output_queue.put("  /api ls Print defined endpoints\n")
+        output_queue.put("  /api add <urlstub>: Add endpoint stub\n")
+        output_queue.put("  /api rm <urlstub>: Remove endpoint stub\n")
         output_queue.put("  /persona: Print current persona\n")
         output_queue.put("  /persona ls: List available personas\n")
         output_queue.put("  /persona <name>: Switch to persona with given name\n")
         output_queue.put("  /model: Print current model\n")
         output_queue.put("  /model ls: List available models\n")
         output_queue.put("  /model ps: List running models\n")
-        output_queue.put("  /model rm <name>: delete a model\n")
-        output_queue.put("  /model pull <name>: pull a model\n")
+        output_queue.put("  /model rm <name>: delete a model from first api endpoint\n")
+        output_queue.put("  /model pull <name>: pull a model into first api endpoint\n")
         output_queue.put("  /model <name>: Switch to model with given name\n")
         output_queue.put("  /?, /help: Show help\n")
         output_queue.put("\n")
@@ -53,6 +78,27 @@ def console(status, prompt):
     if prompt == '/clear':
         status["context"] = PERSONA[status["persona"]]["context"].copy()
         output_queue.put("Cleared session context\n")
+        output_queue.put("\n")
+        return
+
+    if prompt == '/api ls':
+        output_queue.put("Defined endpoints:\n")
+        for endpoint in status["endpoints"]:
+            output_queue.put(f"  {endpoint['api_base']}\n")
+        output_queue.put("\n")
+        return
+    
+    if prompt.startswith('/api add '):
+        api_base = prompt.split(' ')[2].strip()
+        status["endpoints"].append({"api_base": api_base, "model": status["preferred_model"]})
+        output_queue.put(f"Added endpoint '{api_base}'\n")
+        output_queue.put("\n")
+        return
+    
+    if prompt.startswith('/api rm '):
+        api_base = prompt.split(' ')[2].strip()
+        status["endpoints"] = [endpoint for endpoint in status["endpoints"] if endpoint["api_base"] != api_base]
+        output_queue.put(f"Removed endpoint '{api_base}'\n")
         output_queue.put("\n")
         return
 
@@ -92,17 +138,31 @@ def console(status, prompt):
 
     if prompt == '/model ls' or prompt == '/model list':
         output_queue.put("Available models:\n")
-        models_dict = ollama_list(status['endpoints'][0])
-        for (model, attr) in models_dict.items():
-            output_queue.put(f"- {model}\n")
+        models_acc_dict = {}
+        for endpoint in status["endpoints"]:
+            models_dict = ollama_list(endpoint)
+            for (model, attr) in models_dict.items():
+                if model not in models_acc_dict:
+                    models_acc_dict[model] = 1
+                else:
+                    models_acc_dict[model] += 1
+        for (model, count) in models_acc_dict.items():
+            output_queue.put(f"- {model} ({count} endpoints)\n")
         output_queue.put("\n")
         return
     
     if prompt == '/model ps':
         output_queue.put("Running models:\n")
-        models_dict = ollama_ps(status['endpoints'][0])
-        for (model, attr) in models_dict.items():
-            output_queue.put(f"- {model}\n")
+        models_acc_dict = {}
+        for endpoint in status["endpoints"]:
+            models_dict = ollama_ps(endpoint)
+            for (model, attr) in models_dict.items():
+                if model not in models_acc_dict:
+                    models_acc_dict[model] = [endpoint["api_base"]]
+                else:
+                    models_acc_dict[model].append(endpoint["api_base"])
+        for (model, endpoints) in models_acc_dict.items():
+            output_queue.put(f"- {model} {endpoints}\n")
         output_queue.put("\n")
         return
     
@@ -134,14 +194,16 @@ def console(status, prompt):
                 output_queue.put("\n")
                 return
             
-            # check if model_name exists in list of models
-            models_dict = ollama_list(status['endpoints'][0])
-            if model_name not in models_dict:
-                output_queue.put(f"A model with name '{model_name}' does not exist\n")
-                output_queue.put("\n")
-                return
-            status['endpoints'][0]["model"] = model_name
-            output_queue.put(f"Switched to model '{model_name}'\n")
+            for endpoint in status["endpoints"]:
+                models_dict = ollama_list(endpoint)
+                if model_name in models_dict:
+                    endpoint["model"] = model_name
+                    status["preferred_model"] = model_name
+                    output_queue.put(f"Switched to model '{model_name}'\n")
+                    output_queue.put("\n")
+                    return
+            
+            output_queue.put(f"A model with name '{model_name}' does not exist\n")
             output_queue.put("\n")
             return
         except Exception as e:
@@ -149,5 +211,5 @@ def console(status, prompt):
             output_queue.put("\n")
             return
 
-    endpoint = status["endpoints"][0]
+    endpoint = select_endpoint(status)
     chat(endpoint, output_queue, status["context"], prompt=prompt, stream=True)
