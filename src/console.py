@@ -26,7 +26,7 @@ def queue_printer(output_queue):
         print(item, end="")
         sys.stdout.flush()
 
-def select_endpoint(status):
+def select_endpoint4status(status):
     endpoints = status["endpoints"]
     preferred_model = status["preferred_model"]
     return select_endpoint(endpoints, preferred_model)
@@ -211,5 +211,5 @@ def console(status, prompt):
             output_queue.put("\n")
             return
 
-    endpoint = select_endpoint(status)
+    endpoint = select_endpoint4status(status)
     chat(endpoint, output_queue, status["context"], prompt=prompt, stream=True)
