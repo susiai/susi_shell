@@ -1,5 +1,6 @@
 import sys
 import random
+import concurrent.futures
 from src.persona import PERSONA, DEFAULT_PERSONA
 from src.ollama_client import ollama_list, ollama_ps, ollama_pull, ollama_delete, chat
 
@@ -40,10 +41,16 @@ def select_endpoint(endpoints, preferred_model):
     else:
         # get models for each endpoint
         potential_endpoints = []
-        for ep in endpoints:
-            models_dict = ollama_list(ep)
-            if models_dict.get(preferred_model, None) is not None or models_dict.get(preferred_model + ":latest", None) is not None:
-                potential_endpoints.append(ep)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = {executor.submit(ollama_list, ep): ep for ep in endpoints}
+            for future in concurrent.futures.as_completed(futures):
+                ep = futures[future]
+                try:
+                    models_dict = future.result()
+                    if models_dict.get(preferred_model, None) is not None or models_dict.get(preferred_model + ":latest", None) is not None:
+                        potential_endpoints.append(ep)
+                except Exception as e:
+                    print(f"Error fetching models from endpoint {ep['api_base']}: {e}")
         return potential_endpoints[random.randint(0, len(potential_endpoints)-1)]
 
 # compute responses
@@ -148,14 +155,20 @@ def console(status, prompt):
         output_queue.put("Available models:\n")
         models_acc_dict = {}
         model_max_len = 0
-        for endpoint in status["endpoints"]:
-            models_dict = ollama_list(endpoint)
-            for (model, attr) in models_dict.items():
-                model_max_len = max(model_max_len, len(model))
-                if model not in models_acc_dict:
-                    models_acc_dict[model] = 1
-                else:
-                    models_acc_dict[model] += 1
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = {executor.submit(ollama_list, endpoint): endpoint for endpoint in status["endpoints"]}
+            for future in concurrent.futures.as_completed(futures):
+                endpoint = futures[future]
+                try:
+                    models_dict = future.result()
+                    for model, attr in models_dict.items():
+                        model_max_len = max(model_max_len, len(model))
+                        if model not in models_acc_dict:
+                            models_acc_dict[model] = 1
+                        else:
+                            models_acc_dict[model] += 1
+                except Exception as e:
+                    output_queue.put(f"Error fetching models from endpoint {endpoint['api_base']}: {e}\n")
         output_queue.put(f"Model Name {' '*(model_max_len-22)} # of Endpoints\n")
         output_queue.put(f"{'-'*(model_max_len+4)}\n")
         for (model, count) in models_acc_dict.items():
@@ -200,8 +213,11 @@ def console(status, prompt):
         model_name = prompt.split(' ')[2].strip()
         output_queue.put("Pulling models:\n")
         for endpoint in status['endpoints']:
-            success = ollama_pull(endpoint, model_name)
-            output_queue.put(("Successfully pulled model " if success else "Failed to pull model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
+            try:
+                success = ollama_pull(endpoint, model_name)
+                output_queue.put(("Successfully pulled model " if success else "Failed to pull model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
+            except Exception as e:
+                pass
         output_queue.put("\n")
         return
     
@@ -209,8 +225,11 @@ def console(status, prompt):
         model_name = prompt.split(' ')[2].strip()
         output_queue.put(f"Deleting model {model_name} in all endpoints:\n")
         for endpoint in status['endpoints']:
-            success = ollama_delete(endpoint, model_name)
-            output_queue.put(("Successfully deleted model " if success else "Failed to delete model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
+            try:
+                success = ollama_delete(endpoint, model_name)
+                output_queue.put(("Successfully deleted model " if success else "Failed to delete model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
+            except Exception as e:
+                pass
         output_queue.put("\n")
         return
     
@@ -245,14 +264,18 @@ def console(status, prompt):
                 output_queue.put("\n")
                 return
             
+            # search for any endpoint that has the model. If found, the model can be selected
             for endpoint in status["endpoints"]:
-                models_dict = ollama_list(endpoint)
-                if model_name in models_dict:
-                    endpoint["model"] = model_name
-                    status["preferred_model"] = model_name
-                    output_queue.put(f"Switched to model '{model_name}'\n")
-                    output_queue.put("\n")
-                    return
+                try:
+                    models_dict = ollama_list(endpoint)
+                    if model_name in models_dict:
+                        endpoint["model"] = model_name
+                        status["preferred_model"] = model_name
+                        output_queue.put(f"Switched to model '{model_name}'\n")
+                        output_queue.put("\n")
+                        return
+                except Exception as e:
+                    pass
             
             output_queue.put(f"A model with name '{model_name}' does not exist\n")
             output_queue.put("\n")

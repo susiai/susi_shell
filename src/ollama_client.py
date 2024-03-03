@@ -44,7 +44,21 @@ def request_response(method, api_url, body=None, key=None):
     
     return response, conn
 
+list_cache = {}
+
 def ollama_list(endpoint):
+    # try to get list from cache
+    host = endpoint['api_base']
+    cache = entry = list_cache.get(host)
+    if cache:
+        last_updated = cache.get('last_updated')
+        if last_updated and time.time() - last_updated < 3600:
+            data = cache.get('data')
+            if data:
+                return data
+
+    # make connection
+    t0 = time.time()
     response, conn = request_response("GET", f"{endpoint['api_base']}/api/tags", None, endpoint.get("key"))
     status_code = response.status
     if status_code != 200:
@@ -58,6 +72,15 @@ def ollama_list(endpoint):
         }
         for entry in data['models']
     }
+
+    # update cache
+    list_cache[host] = {
+        'last_updated': t0,
+        'data': models_dict
+    }
+
+    #t1 = time.time()
+    #print(f"Time taken for host {host} : {t1 - t0}")
     return models_dict
 
 def ollama_ps(endpoint):
