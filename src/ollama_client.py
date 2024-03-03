@@ -12,7 +12,7 @@ def get_endpoint(api_base='http://localhost:11434', model_name='llama3.2:latest'
         "api_base": api_base
     }
 
-def request(method, api_url, body=None, key=None):
+def request_response_base(method, api_url, body=None, key=None):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     encoded_body = json.dumps(body).encode('utf-8') if body else None
     headers = {'Accept': 'application/json'}
@@ -26,11 +26,30 @@ def request(method, api_url, body=None, key=None):
     else:
         conn = http.client.HTTPConnection(api_url.netloc)
     conn.request(method, api_url.path, body=encoded_body, headers=headers)
-    return conn
+    response = conn.getresponse()
+    return response, conn
+
+def request_response(method, api_url, body=None, key=None):
+    response, conn = request_response_base(method, api_url, body, key)
+    status_code = response.status
+
+    # handle redirect
+    if status_code == 301:
+        new_path = response.getheader('Location')
+        conn.close()
+        api_url_parsed = urlparse(api_url)
+        new_url = new_path if new_path.startswith("http") else f"{api_url_parsed.scheme}://{api_url_parsed.netloc}{new_path}"
+        response, conn = request_response("GET", f"{new_url}", body, key)
+        status_code = response.status
+    
+    return response, conn
 
 def ollama_list(endpoint):
-    conn = request("GET", f"{endpoint['api_base']}/api/tags", None, endpoint.get("key"))
-    data = json.loads(conn.getresponse().read())
+    response, conn = request_response("GET", f"{endpoint['api_base']}/api/tags", None, endpoint.get("key"))
+    status_code = response.status
+    if status_code != 200:
+        raise Exception(f"Unexpected status code: {status_code}")
+    data = json.loads(response.read())
     conn.close()
     models_dict = {
         entry['model']: {
@@ -42,8 +61,8 @@ def ollama_list(endpoint):
     return models_dict
 
 def ollama_ps(endpoint):
-    conn = request("GET", f"{endpoint['api_base']}/api/ps", None, endpoint.get("key"))
-    data = json.loads(conn.getresponse().read())
+    response, conn = request_response("GET", f"{endpoint['api_base']}/api/ps", None, endpoint.get("key"))
+    data = json.loads(response.read())
     conn.close()
     models_dict = {
         entry['model']: {
@@ -56,16 +75,15 @@ def ollama_ps(endpoint):
 
 def ollama_pull(endpoint, model):
     # curl http://localhost:11434/api/pull -d '{"model": "llama3.2"}'
-    conn = request("POST", f"{endpoint['api_base']}/api/pull", {"model": model, "stream": False}, endpoint.get("key"))
-    data = json.loads(conn.getresponse().read())
+    response, conn = request_response("POST", f"{endpoint['api_base']}/api/pull", {"model": model, "stream": False}, endpoint.get("key"))
+    data = json.loads(response.read())
     conn.close()
     return not data.get("error", False)
 
 def ollama_delete(endpoint, model):
     #curl -X DELETE http://localhost:11434/api/delete -d '{"model": "llama3.2"}'
-    conn = request("DELETE", f"{endpoint['api_base']}/api/delete", {"model": model}, endpoint.get("key"))
-    # check http response
-    response_code = conn.getresponse().status
+    response, conn = request_response("DELETE", f"{endpoint['api_base']}/api/delete", {"model": model}, endpoint.get("key"))
+    response_code = response.status
     conn.close()
     return response_code == 200
 
@@ -84,12 +102,11 @@ def chat(endpoint, output_queue, context, prompt='Hello World', stream = False, 
         "stop": ["[/INST]", "<|im_end|>", "<|end_of_turn|>", "<|eot_id|>", "<|end_header_id|>", "<EOS_TOKEN>", "</s>", "<|end|>"]
     }
     t_0 = time.time()
-    conn = request("POST", endpoint["api_base"] + "/v1/chat/completions", body, endpoint.get("key", None))
-    resp = conn.getresponse()
+    response, conn = request_response("POST", endpoint["api_base"] + "/v1/chat/completions", body, endpoint.get("key", None))
     POISON_PILL = "data: [DONE]"
     if stream:
         total_tokens = 0
-        for line in resp:
+        for line in response:
             t = line.decode('utf-8').strip()
             if not t or len(t) < 6: continue
             if POISON_PILL in t or '"finish_reason":"stop"' in t:
@@ -110,7 +127,7 @@ def chat(endpoint, output_queue, context, prompt='Hello World', stream = False, 
             except json.JSONDecodeError as e:
                 raise Exception(f"Failed to parse JSON response from the API: {e}, t: {t}")
     else:
-        data = resp.read()
+        data = response.read()
         conn.close()
 
         try:

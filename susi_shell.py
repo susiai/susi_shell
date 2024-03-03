@@ -39,7 +39,8 @@ def main():
     output_queue_thread = threading.Thread(target=queue_printer, args=(output_queue,), daemon=True)
     output_queue_thread.start()
     api_endpoints = args.api if args.api else ["http://localhost:11434"]
-    endpoints = [get_endpoint(api_base = api, model_name = args.model) for api in api_endpoints]
+    cleaned_endpoints = [api.rstrip('/') for api in api_endpoints]
+    endpoints = [get_endpoint(api_base=api, model_name=args.model) for api in cleaned_endpoints]
     status = initialize_status(endpoints, args.model, DEFAULT_PERSONA, output_queue)
 
     # parse command line commands
