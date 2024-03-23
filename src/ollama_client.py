@@ -1,6 +1,8 @@
 import json
 import time
+import queue
 import urllib3
+import threading
 import http.client
 from urllib.parse import urlparse
 
@@ -110,7 +112,32 @@ def ollama_delete(endpoint, model):
     conn.close()
     return response_code == 200
 
-def chat(endpoint, output_queue, context, prompt='Hello World', stream = False, temperature=0.0, max_tokens=8192):
+
+country_format = {
+    "format": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "capital": {"type": "string"},
+            "languages": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["name", "capital", "languages"]
+    }
+}
+list_format = {
+        "type": "object",
+        "properties": {
+            "list": {"type": "array", "items": {"type": "string"}},
+            "things-to-bring": {
+                "type": "object",
+                "properties": {"personal-id-type": {"type": "string"}, "computer-type": {"type": "string"}, "phone-number": {"type": "string"}},
+                "required": ["personal-id-type", "computer-type", "phone-number"]
+            }
+        },
+        "required": ["list"]
+}
+
+def chat(endpoint, output_queue, context, prompt='Hello World', stream = False, temperature=0.0, max_tokens=8192, response_format=None):
     context.append({"role": "user", "content": prompt})
     body = {
         "top_p": 0.7,
@@ -119,11 +146,18 @@ def chat(endpoint, output_queue, context, prompt='Hello World', stream = False, 
         "presence_penalty": 0.3,
         "frequency_penalty": 0.7,
         "max_tokens": max_tokens,
+        "max_completion_tokens": max_tokens,
         "temperature": temperature,
         "model": endpoint["model"],
         "response_format": { "type": "text" },
         "stop": ["[/INST]", "<|im_end|>", "<|end_of_turn|>", "<|eot_id|>", "<|end_header_id|>", "<EOS_TOKEN>", "</s>", "<|end|>"]
     }
+    if response_format:
+        if not "json" in prompt.lower(): body["messages"][-1]["content"] += "\n return a json object as response"
+        #body["response_format"] = {"type": "json_schema", "json_schema": {"schema": {"type": "object", "properties": {"list": {"type": "array", "items": {"type": "string"}}}}}}
+        body["response_format"] = {"type": "json_schema", "json_schema": {"schema": response_format}}
+        #body["response_format"] = response_format
+    print(body)
     t_0 = time.time()
     response, conn = request_response("POST", endpoint["api_base"] + "/v1/chat/completions", body, endpoint.get("key", None))
     POISON_PILL = "data: [DONE]"
@@ -134,21 +168,23 @@ def chat(endpoint, output_queue, context, prompt='Hello World', stream = False, 
             if not t or len(t) < 6: continue
             if POISON_PILL in t or '"finish_reason":"stop"' in t:
                 conn.close()
-                output_queue.put("\n\n")
+                if output_queue: output_queue.put("\n\n")
                 t_1 = time.time()
                 token_per_second = total_tokens / (t_1 - t_0)
                 return total_tokens, token_per_second
 
-            t = t[6:]
+            t = t[6:] # remove "data: "
             if not t: continue
 
             try:
                 t = json.loads(t)
                 token = t.get('choices', [{}])[0].get('delta', {}).get('content', '')
-                output_queue.put(token)
+                if output_queue: output_queue.put(token)
                 total_tokens += 1
             except json.JSONDecodeError as e:
                 raise Exception(f"Failed to parse JSON response from the API: {e}, t: {t}")
+        # if we reach here, the stream was closed
+        return total_tokens, token_per_second
     else:
         data = response.read()
         conn.close()
@@ -166,8 +202,55 @@ def chat(endpoint, output_queue, context, prompt='Hello World', stream = False, 
             if output_queue:
                 for line in answer.split('\n'):
                     output_queue.put(f"{line}\n")
-                output_queue.put("\n")
+                    time.sleep(0.1)
             context.append({"role": "assistant", "content": answer})
             return total_tokens, token_per_second
         except json.JSONDecodeError as e:
             raise Exception(f"Failed to parse JSON response from the API: {e}")
+
+
+# test function
+if __name__ == "__main__":
+    endpoint = get_endpoint()
+    ls = ollama_list(endpoint)
+    # order ls by parameter size
+    ls = {k: v for k, v in sorted(ls.items(), key=lambda item: item[1]['parameter_size'])}
+    # first entry in the ls is the smallest model
+    model_from_ls = list(ls.keys())[0] if ls and len(ls) > 0 else None
+    ps = ollama_ps(endpoint)
+    print(ps)
+    # order ps by parameter size
+    ps = {k: v for k, v in sorted(ps.items(), key=lambda item: item[1]['parameter_size'])}
+    # first entry in the ps is the smallest
+    model_from_ps = list(ps.keys())[0] if ps and len(ps) > 0 else None
+    # in case that the ps_smallest is not larger than twice of model_from_ls, we select the model from ls
+    if model_from_ps and model_from_ls and ps[model_from_ps]['parameter_size'] < 2 * ls[model_from_ls]['parameter_size']:
+        selected_model = model_from_ps
+    else:
+        selected_model = model_from_ls
+    if not selected_model:
+        selected_model = "llama3.2"
+        ollama_pull(endpoint, selected_model)
+    #selected_model = "phi4:14b"
+    print(f"Selected Model {selected_model}")
+    endpoint['model'] = selected_model
+
+    output_queue = queue.Queue()
+
+    def print_from_queue(queue):
+        while True:
+            while queue and not queue.empty():
+                print(queue.get(), end="")
+            time.sleep(1)
+        print("Done print_from_queue")
+
+    print_thread = threading.Thread(target=print_from_queue, args=(output_queue,))
+    print_thread.daemon = True
+    print_thread.start()
+
+    #print(chat(endpoint, output_queue, [], "Make a list of good places for developers", False, 0.0, 8192))
+    print(chat(endpoint, output_queue, [], "Make a list of good places for developers, return a json object as response", False, 0.0, 8192, list_format))
+    # terminate the print thread
+    output_queue.put(None)
+
+    print("Done")

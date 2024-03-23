@@ -213,23 +213,30 @@ def console(status, prompt):
         model_name = prompt.split(' ')[2].strip()
         output_queue.put("Pulling models:\n")
         for endpoint in status['endpoints']:
-            try:
-                success = ollama_pull(endpoint, model_name)
-                output_queue.put(("Successfully pulled model " if success else "Failed to pull model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
-            except Exception as e:
-                pass
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = {executor.submit(ollama_pull, endpoint, model_name): endpoint for endpoint in status['endpoints']}
+                for future in concurrent.futures.as_completed(futures):
+                    endpoint = futures[future]
+                    try:
+                        success = future.result()
+                        output_queue.put(("Successfully pulled model " if success else "Failed to pull model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
+                    except Exception as e:
+                        output_queue.put(f"Error pulling model {model_name} in endpoint {endpoint['api_base']}: {e}\n")
         output_queue.put("\n")
         return
     
     if prompt.startswith('/model rm ') or prompt.startswith('/model delete '):
         model_name = prompt.split(' ')[2].strip()
         output_queue.put(f"Deleting model {model_name} in all endpoints:\n")
-        for endpoint in status['endpoints']:
-            try:
-                success = ollama_delete(endpoint, model_name)
-                output_queue.put(("Successfully deleted model " if success else "Failed to delete model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
-            except Exception as e:
-                pass
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = {executor.submit(ollama_delete, endpoint, model_name): endpoint for endpoint in status['endpoints']}
+            for future in concurrent.futures.as_completed(futures):
+                endpoint = futures[future]
+                try:
+                    success = future.result()
+                    output_queue.put(("Successfully deleted model " if success else "Failed to delete model ") + model_name + " in endpoint " + endpoint["api_base"] + "\n")
+                except Exception as e:
+                    output_queue.put(f"Error deleting model {model_name} in endpoint {endpoint['api_base']}: {e}\n")
         output_queue.put("\n")
         return
     
