@@ -62,7 +62,7 @@ def console(status, prompt):
         output_queue.put("\n")
         return
 
-    if prompt == '/?' or prompt == '/help':
+    if prompt == '/?' or prompt == '/help' or prompt == '!?' or prompt == '!help':
         output_queue.put("Commands:\n")
         output_queue.put("  /bye: Exit\n")
         output_queue.put("  /clear: Clear session context\n")
@@ -96,7 +96,7 @@ def console(status, prompt):
         output_queue.put("\n")
         return
 
-    if prompt == '/api ls':
+    if prompt == '/api ls' or prompt == '/api':
         output_queue.put("Defined endpoints:\n")
         for endpoint in status["endpoints"]:
             output_queue.put(f"  {endpoint['api_base']}\n")

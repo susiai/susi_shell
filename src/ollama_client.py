@@ -157,7 +157,7 @@ def chat(endpoint, output_queue, context, prompt='Hello World', stream = False, 
         #body["response_format"] = {"type": "json_schema", "json_schema": {"schema": {"type": "object", "properties": {"list": {"type": "array", "items": {"type": "string"}}}}}}
         body["response_format"] = {"type": "json_schema", "json_schema": {"schema": response_format}}
         #body["response_format"] = response_format
-    print(body)
+    #print(body)
     t_0 = time.time()
     response, conn = request_response("POST", endpoint["api_base"] + "/v1/chat/completions", body, endpoint.get("key", None))
     POISON_PILL = "data: [DONE]"
